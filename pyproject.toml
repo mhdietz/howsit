@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "howsit"
+version = "0.1.0"
+description = "Public ocean/weather data fetch layer (NDBC, CDIP, tides). No product logic, no scoring, no Surfline."
+requires-python = ">=3.9"
+
+[tool.setuptools.packages.find]
+include = ["howsit*"]
