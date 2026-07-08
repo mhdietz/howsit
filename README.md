@@ -17,16 +17,25 @@ depends on it.
   access, no netCDF library). First module; seeded from `partiwave/pipeline/fetch.py`'s
   existing (single-latest-reading) CDIP fetcher, generalized here into a time-windowed
   fetch so callers can align multiple readings per day against another source's snapshots.
+  **Live and in production use** as of 2026-07-08 — `surfpy-clean/evaluation/fetch/cdip.py`
+  is the first consumer, both locally and via GitHub Actions (installed from this repo's
+  `main` branch through `pip install git+https://github.com/mhdietz/howsit.git`).
 - `ndbc.py`, `tides.py` — not yet ported. `partiwave/pipeline/fetch.py` has working
-  surfpy-free implementations of both; porting is the next step once `cdip.py` has
-  proven the pattern out.
+  surfpy-free implementations of both; porting is the next step now that `cdip.py` has
+  proven the pattern works end-to-end (local dev, real DB writes, and CI all verified).
 
-## Install (local development)
+## Install
 
-From a consuming project's virtualenv:
+From a consuming project's virtualenv, for local development against an editable copy:
 
 ```bash
 pip install -e /path/to/howsit
+```
+
+Or, in a `requirements.txt` / CI context, directly from GitHub:
+
+```
+howsit @ git+https://github.com/mhdietz/howsit.git
 ```
 
 ## Design notes
