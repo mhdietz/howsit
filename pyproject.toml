@@ -8,5 +8,8 @@ version = "0.1.0"
 description = "Public ocean/weather data fetch layer (NDBC, CDIP, tides). No product logic, no scoring, no Surfline."
 requires-python = ">=3.9"
 
+[project.optional-dependencies]
+dev = ["pytest"]
+
 [tool.setuptools.packages.find]
 include = ["howsit*"]
