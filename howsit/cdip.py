@@ -10,6 +10,7 @@ a time window of recent readings so a caller can align multiple readings per
 day against another source's snapshots (e.g. Surfline's 5 daily readings).
 """
 
+import bisect
 import re
 from datetime import datetime, timezone
 
@@ -20,6 +21,10 @@ CDIP_FILL_VALUE = -999.99
 M_TO_FT = 3.28084
 
 _DIM_RE_TEMPLATE = r"{name}\[{name}\s*=\s*(\d+)\]"
+
+
+def _c_to_f(celsius: float) -> float:
+    return celsius * 9 / 5 + 32
 
 
 def _dds_dim_size(dds_text: str, dim_name: str):
@@ -49,6 +54,50 @@ def _cdip_fill(raw: str):
     return None if value <= (CDIP_FILL_VALUE + 1) else value
 
 
+def _fetch_sst_series(dataset: str, dds: str, count: int):
+    """
+    Fetch up to `count` recent SST samples for a CDIP dataset, as parallel
+    (timestamps, water_temp_f) lists sorted oldest-first.
+
+    Returns ([], []) if the dataset has no sstTime dimension (no SST sensor)
+    or the fetch/parse fails for any reason (station-specific outage) — SST
+    is a best-effort enrichment, never a reason to fail the wave fetch.
+    """
+    sst_n = _dds_dim_size(dds, "sstTime")
+    if not sst_n:
+        return [], []
+
+    try:
+        idx_end = sst_n - 1
+        idx_start = max(0, idx_end - count + 1)
+        sst_ascii = http_get(
+            f"{CDIP_BASE}/{dataset}.ascii"
+            f"?sstSeaSurfaceTemperature[{idx_start}:1:{idx_end}],"
+            f"sstTime[{idx_start}:1:{idx_end}]"
+        )
+        sst_values = _parse_opendap_ascii(sst_ascii)
+        times = [int(t) for t in sst_values["sstTime"]]
+        temps_f = [
+            _c_to_f(v) if (v := _cdip_fill(raw)) is not None else None
+            for raw in sst_values["sstSeaSurfaceTemperature"]
+        ]
+    except Exception:
+        return [], []
+
+    paired = sorted(zip(times, temps_f))
+    return [t for t, _ in paired], [v for _, v in paired]
+
+
+def _nearest_sst_temp_f(sst_times: list[int], sst_temps_f: list, target_ts: int):
+    """Water temp (°F) from the SST sample closest in time to target_ts."""
+    if not sst_times:
+        return None
+    i = bisect.bisect_left(sst_times, target_ts)
+    candidates = [j for j in (i - 1, i) if 0 <= j < len(sst_times)]
+    nearest = min(candidates, key=lambda j: abs(sst_times[j] - target_ts))
+    return sst_temps_f[nearest]
+
+
 def fetch_cdip_window(station_id: str, count: int = 200) -> list[dict]:
     """
     Fetch the most recent `count` wave readings for a CDIP station.
@@ -62,7 +111,11 @@ def fetch_cdip_window(station_id: str, count: int = 200) -> list[dict]:
         {'observed_at': iso8601 str (UTC),
          'wave_height_ft': float | None,
          'dominant_period_s': float | None,
-         'swell_direction_deg': float | None}
+         'swell_direction_deg': float | None,
+         'water_temp_f': float | None (nearest-in-time SST sample; None if the
+            station has no SST sensor or the SST fetch failed),
+         'raw_payload': str (the untouched wave ascii response, for replaying
+            a bad parse)}
 
     Raises ValueError if the station has no waveTime dimension (offline) or
     the ascii response has no timestamps.
@@ -90,9 +143,12 @@ def fetch_cdip_window(station_id: str, count: int = 200) -> list[dict]:
     tp_vals = values.get("waveTp", [])
     dp_vals = values.get("waveDp", [])
 
+    sst_times, sst_temps_f = _fetch_sst_series(dataset, dds, count)
+
     readings = []
     for i, ts_raw in enumerate(values["waveTime"]):
-        observed_at = datetime.fromtimestamp(int(ts_raw), tz=timezone.utc)
+        ts_int = int(ts_raw)
+        observed_at = datetime.fromtimestamp(ts_int, tz=timezone.utc)
         hs = _cdip_fill(hs_vals[i]) if i < len(hs_vals) else None
         tp = _cdip_fill(tp_vals[i]) if i < len(tp_vals) else None
         dp = _cdip_fill(dp_vals[i]) if i < len(dp_vals) else None
@@ -101,6 +157,8 @@ def fetch_cdip_window(station_id: str, count: int = 200) -> list[dict]:
             "wave_height_ft": hs * M_TO_FT if hs is not None else None,
             "dominant_period_s": tp,
             "swell_direction_deg": dp,
+            "water_temp_f": _nearest_sst_temp_f(sst_times, sst_temps_f, ts_int),
+            "raw_payload": ascii_body,
         })
 
     readings.sort(key=lambda r: r["observed_at"])

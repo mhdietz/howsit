@@ -54,6 +54,7 @@ def test_fetch_ndbc_window_happy_path_sorted_and_converted():
     assert oldest["wind_speed_mph"] == pytest.approx(5.1 * 2.23694)
     assert oldest["wind_direction_deg"] == 220.0
     assert oldest["water_temp_f"] == pytest.approx(17.2 * 9 / 5 + 32)
+    assert oldest["raw_payload"] == rows[2]
 
 
 def test_fetch_ndbc_window_dominant_period_falls_back_to_apd():

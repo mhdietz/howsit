@@ -87,8 +87,11 @@ def test_cdip_fill_just_above_boundary_is_not_none():
 # --- fetch_cdip_window ----------------------------------------------------
 
 
-def _dds_for(wave_n):
-    return f"Dataset {{\n    Float64 waveTime[waveTime = {wave_n}];\n}} station;"
+def _dds_for(wave_n, sst_n=None):
+    dims = f"Float64 waveTime[waveTime = {wave_n}];"
+    if sst_n is not None:
+        dims += f"\n    Float64 sstTime[sstTime = {sst_n}];"
+    return f"Dataset {{\n    {dims}\n}} station;"
 
 
 def _dds_offline():
@@ -111,12 +114,25 @@ def _ascii_empty():
     return sep + "waveHs[0]\n\n"
 
 
-def _mock_http_get(dds_text, ascii_text, calls=None):
+def _sst_ascii_for(temps, times):
+    sep = "---------------------------------------------\n"
+    return (
+        sep
+        + f"sstSeaSurfaceTemperature[{len(temps)}]\n{', '.join(temps)}\n\n"
+        + f"sstTime[{len(times)}]\n{', '.join(times)}\n"
+    )
+
+
+def _mock_http_get(dds_text, ascii_text, calls=None, sst_ascii_text=None, sst_raises=False):
     def side_effect(url, *args, **kwargs):
         if calls is not None:
             calls.append(url)
         if url.endswith(".dds"):
             return dds_text
+        if "sstSeaSurfaceTemperature" in url:
+            if sst_raises:
+                raise RuntimeError("sst fetch failed")
+            return sst_ascii_text
         return ascii_text
 
     return side_effect
@@ -145,6 +161,8 @@ def test_fetch_cdip_window_happy_path():
     assert oldest["dominant_period_s"] == 11.0
     assert oldest["swell_direction_deg"] == 210.0
     assert oldest["wave_height_ft"] == pytest.approx(2.0 * 3.28084)
+    assert oldest["water_temp_f"] is None  # no sstTime dimension in this fixture's dds
+    assert all(r["raw_payload"] == ascii_body for r in readings)
 
 
 def test_fetch_cdip_window_fill_values_become_none():
@@ -166,6 +184,8 @@ def test_fetch_cdip_window_fill_values_become_none():
             "wave_height_ft": None,
             "dominant_period_s": None,
             "swell_direction_deg": None,
+            "water_temp_f": None,
+            "raw_payload": ascii_body,
         }
     ]
 
@@ -220,3 +240,101 @@ def test_fetch_cdip_window_index_range_clamped_when_history_shorter_than_count()
 
     ascii_url = calls[1]
     assert "[0:1:4]" in ascii_url
+
+
+# --- fetch_cdip_window: SST (water_temp_f) ---------------------------------
+
+
+def test_fetch_cdip_window_sst_matching_cadence():
+    wave_times = ["1700000000", "1700001800", "1700003600"]
+    ascii_body = _ascii_for(
+        hs=["1.0", "1.0", "1.0"], tp=["10.0", "10.0", "10.0"],
+        dp=["200.0", "200.0", "200.0"], times=wave_times,
+    )
+    sst_ascii = _sst_ascii_for(temps=["10.0", "12.0", "14.0"], times=wave_times)
+
+    with patch(
+        "howsit.cdip.http_get",
+        side_effect=_mock_http_get(
+            _dds_for(3, sst_n=3), ascii_body, sst_ascii_text=sst_ascii
+        ),
+    ):
+        readings = fetch_cdip_window("999", count=3)
+
+    assert [r["water_temp_f"] for r in readings] == [
+        pytest.approx(10.0 * 9 / 5 + 32),
+        pytest.approx(12.0 * 9 / 5 + 32),
+        pytest.approx(14.0 * 9 / 5 + 32),
+    ]
+
+
+def test_fetch_cdip_window_sst_mismatched_cadence_uses_nearest_neighbor():
+    wave_times = ["1700000000", "1700001800", "1700003600"]
+    ascii_body = _ascii_for(
+        hs=["1.0", "1.0", "1.0"], tp=["10.0", "10.0", "10.0"],
+        dp=["200.0", "200.0", "200.0"], times=wave_times,
+    )
+    # Sparser SST cadence: one sample at t0, one 900s before t2 (closer to t1 and t2 than to t0).
+    sst_ascii = _sst_ascii_for(temps=["10.0", "20.0"], times=["1700000000", "1700002700"])
+
+    with patch(
+        "howsit.cdip.http_get",
+        side_effect=_mock_http_get(
+            _dds_for(3, sst_n=2), ascii_body, sst_ascii_text=sst_ascii
+        ),
+    ):
+        readings = fetch_cdip_window("999", count=3)
+
+    assert [r["water_temp_f"] for r in readings] == [
+        pytest.approx(10.0 * 9 / 5 + 32),  # t0: nearest is sst @ t0 (dist 0)
+        pytest.approx(20.0 * 9 / 5 + 32),  # t1: nearest is sst @ t0+2700 (dist 900 vs 1800)
+        pytest.approx(20.0 * 9 / 5 + 32),  # t2: nearest is sst @ t0+2700 (dist 900 vs 3600)
+    ]
+
+
+def test_fetch_cdip_window_no_sst_dimension_skips_second_fetch():
+    calls = []
+    ascii_body = _ascii_for(
+        hs=["1.0"], tp=["10.0"], dp=["200.0"], times=["1700000000"]
+    )
+    with patch(
+        "howsit.cdip.http_get",
+        side_effect=_mock_http_get(_dds_for(1), ascii_body, calls=calls),
+    ):
+        readings = fetch_cdip_window("999", count=1)
+
+    assert readings[0]["water_temp_f"] is None
+    assert len(calls) == 2  # .dds + wave .ascii only, no sst fetch attempted
+
+
+def test_fetch_cdip_window_sst_fetch_failure_tolerated():
+    ascii_body = _ascii_for(
+        hs=["1.0"], tp=["10.0"], dp=["200.0"], times=["1700000000"]
+    )
+    with patch(
+        "howsit.cdip.http_get",
+        side_effect=_mock_http_get(
+            _dds_for(1, sst_n=1), ascii_body, sst_raises=True
+        ),
+    ):
+        readings = fetch_cdip_window("999", count=1)
+
+    assert readings[0]["water_temp_f"] is None
+    assert readings[0]["wave_height_ft"] == pytest.approx(1.0 * 3.28084)
+
+
+def test_fetch_cdip_window_sst_fill_value_becomes_none():
+    ascii_body = _ascii_for(
+        hs=["1.0"], tp=["10.0"], dp=["200.0"], times=["1700000000"]
+    )
+    sst_ascii = _sst_ascii_for(temps=["-999.99"], times=["1700000000"])
+
+    with patch(
+        "howsit.cdip.http_get",
+        side_effect=_mock_http_get(
+            _dds_for(1, sst_n=1), ascii_body, sst_ascii_text=sst_ascii
+        ),
+    ):
+        readings = fetch_cdip_window("999", count=1)
+
+    assert readings[0]["water_temp_f"] is None

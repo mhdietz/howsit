@@ -21,9 +21,12 @@ test coverage in `tests/`.
   access, no netCDF library). Seeded from `partiwave/pipeline/fetch.py`'s existing
   (single-latest-reading) CDIP fetcher, generalized here into a time-windowed fetch
   (`fetch_cdip_window()`) so callers can align multiple readings per day against another
-  source's snapshots. **Live and in production use** as of 2026-07-08 —
-  `surfpy-clean/evaluation/fetch/cdip.py` is the first consumer, both locally and via
-  GitHub Actions (installed from this repo's `main` branch through
+  source's snapshots. Also fetches water temp (SST) when the station has that sensor,
+  nearest-neighbor-joined per reading since SST's sampling cadence doesn't necessarily
+  match wave's over a window. Each reading carries `raw_payload` (the untouched ascii
+  response) so a bad parse can be replayed without re-fetching. **Live and in production
+  use** as of 2026-07-08 — `surfpy-clean/evaluation/fetch/cdip.py` is the first consumer,
+  both locally and via GitHub Actions (installed from this repo's `main` branch through
   `pip install git+https://github.com/mhdietz/howsit.git`).
 - `ndbc.py` — NDBC buoy observations via the `realtime2.txt` feed. Ported from
   `partiwave/pipeline/fetch.py`'s `fetch_ndbc()`, generalized the same way `cdip.py` was:

@@ -44,7 +44,8 @@ def fetch_ndbc_window(station_id: str, count: int = 200) -> list[dict]:
          'swell_direction_deg': float | None,
          'wind_speed_mph': float | None,
          'wind_direction_deg': float | None,
-         'water_temp_f': float | None}
+         'water_temp_f': float | None,
+         'raw_payload': str (the untouched source line, for replaying a bad parse)}
 
     Raises ValueError if the feed has no data rows, or if every row is
     structurally malformed.
@@ -82,6 +83,7 @@ def fetch_ndbc_window(station_id: str, count: int = 200) -> list[dict]:
             "wind_speed_mph": wspd * MS_TO_MPH if wspd is not None else None,
             "wind_direction_deg": wdir,
             "water_temp_f": _c_to_f(wtmp) if wtmp is not None else None,
+            "raw_payload": line,
         })
 
     if not readings:
