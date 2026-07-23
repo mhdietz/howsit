@@ -6,16 +6,18 @@ projects that consume this one.
 
 Meant as an intentionally-built, understood, maintained replacement for the parts of
 [surfpy](https://github.com/mpiannucci/surfpy) that [surfpy-clean](../surfpy-clean)'s
-`evaluation/` and [partiwave](../partiwave) both currently duplicate or depend on.
-All three fetchers (CDIP, NDBC, tides) are now ported and tested; `surfpy-clean/evaluation`
-is the first live consumer. Next step: migrate `partiwave/pipeline/fetch.py` off its own
-duplicated fetch code onto this repo.
+`evaluation/` and [partiwave](../partiwave) both used to duplicate or depend on.
+All three fetchers (CDIP, NDBC, tides) are ported and tested, and both intended consumers
+have migrated onto this repo: `surfpy-clean/evaluation` and, as of 2026-07-22,
+`partiwave/pipeline/fetch.py` (which now imports `fetch_cdip_window`, `fetch_ndbc_window`,
+and `fetch_tide_window` directly and adapts howsit's windowed readings into the single
+current values its pipeline stores, rather than fetching them itself).
 
 ## Status
 
-All three fetchers ported from `partiwave/pipeline/fetch.py`, each generalized from a
-single-latest/hardcoded-window fetch into a caller-configurable windowed one, and each with
-test coverage in `tests/`.
+All three fetchers ported from partiwave's original `pipeline/fetch.py`, each generalized
+from a single-latest/hardcoded-window fetch into a caller-configurable windowed one, and
+each with test coverage in `tests/`.
 
 - `cdip.py` — CDIP nearshore buoy wave readings via THREDDS OPeNDAP (plain-text ascii
   access, no netCDF library). Seeded from `partiwave/pipeline/fetch.py`'s existing
@@ -25,16 +27,21 @@ test coverage in `tests/`.
   nearest-neighbor-joined per reading since SST's sampling cadence doesn't necessarily
   match wave's over a window. Each reading carries `raw_payload` (the untouched ascii
   response) so a bad parse can be replayed without re-fetching. **Live and in production
-  use** as of 2026-07-08 — `surfpy-clean/evaluation/fetch/cdip.py` is the first consumer,
-  both locally and via GitHub Actions (installed from this repo's `main` branch through
+  use** as of 2026-07-08 — `surfpy-clean/evaluation/fetch/cdip.py` was the first consumer,
+  both locally and via GitHub Actions; `partiwave/pipeline/fetch.py` migrated onto it as of
+  2026-07-22 (installed from this repo's `main` branch through
   `pip install git+https://github.com/mhdietz/howsit.git`).
 - `ndbc.py` — NDBC buoy observations via the `realtime2.txt` feed. Ported from
   `partiwave/pipeline/fetch.py`'s `fetch_ndbc()`, generalized the same way `cdip.py` was:
   from a single-latest-reading fetch into a time-windowed `fetch_ndbc_window()`, for API
-  consistency with `fetch_cdip_window()`.
+  consistency with `fetch_cdip_window()`. Each reading carries `raw_payload` (the untouched
+  source line) too. **Live and in production use** as of 2026-07-22 —
+  `partiwave/pipeline/fetch.py` is the consumer.
 - `tides.py` — NOAA CO-OPS high/low tide predictions. Ported from
   `partiwave/pipeline/fetch.py`'s `fetch_tide()`, generalized from its hardcoded -1/+2 day
   window into caller-configurable `fetch_tide_window(station_id, days_before, days_after)`.
+  **Live and in production use** as of 2026-07-22 — `partiwave/pipeline/fetch.py` is the
+  consumer.
 
 ## Install
 
